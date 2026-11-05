@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "lyricvibes",
+  "version": "${version}",
+  "name": "LyricVibes",
+  "description": "Synced lyrics of whatever you're listening to, floating in your Minecraft world.",
+  "authors": ["L12"],
+  "contact": {
+    "homepage": "https://krts.dev",
+    "sources": "https://github.com/L12-MC/LyricVibes"
+  },
+  "license": "MIT",
+  "icon": "assets/lyricvibes/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      {
+        "adapter": "kotlin",
+        "value": "dev.krts.lyricvibes.LyricVibes"
+      }
+    ]
+  },
+  "mixins": ["lyricvibes.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.17.0",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*",
+    "fabric-language-kotlin": ">=1.13.0"
+  }
+}

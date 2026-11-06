@@ -274,8 +274,10 @@ class IconButton(private val icon: () -> PolyImage, private val diameter: Float,
     }
 }
 
-class TextButton(private val label: String, private val onClick: () -> Unit) : Widget(120f, 28f) {
-    fun measure() = if (initialized) Paint.width(renderer, Paint.medium, label, 12f) + 28f else label.length * 7f + 28f
+class TextButton(private val label: () -> String, private val onClick: () -> Unit) : Widget(120f, 28f) {
+    constructor(label: String, onClick: () -> Unit) : this({ label }, onClick)
+
+    fun measure() = label().let { if (initialized) Paint.width(renderer, Paint.medium, it, 12f) + 28f else it.length * 7f + 28f }
 
     override fun onClick(button: Int): Boolean {
         if (button != 0) return false
@@ -290,7 +292,7 @@ class TextButton(private val label: String, private val onClick: () -> Unit) : W
         val bx = x + (width - w) / 2f
         val by = y + (height - h) / 2f
         renderer.rect(bx, by, w, h, Paint.c(lerpColor(Paint.SURFACE, 0x2EFFFFFF, hover.value)), h / 2f)
-        Paint.text(renderer, Paint.medium, bx + 14f, by + h / 2f, label, Paint.TEXT, 12f * s)
+        Paint.text(renderer, Paint.medium, bx + 14f, by + h / 2f, label(), Paint.TEXT, 12f * s)
     }
 }
 

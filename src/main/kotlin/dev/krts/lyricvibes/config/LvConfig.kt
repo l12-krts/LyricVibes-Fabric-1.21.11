@@ -11,6 +11,12 @@ enum class WorldMode(val label: String) { SKY("Sky"), CLOSE("Close"), TRAIL("Tra
 
 enum class Side(val label: String) { LEFT("Left"), RIGHT("Right") }
 
+enum class SpotifyMode(val label: String, val hint: String) {
+    OFF("Off", "LRCLIB only"),
+    FALLBACK("Fallback", "When LRCLIB has no sync"),
+    PREFER("Prefer", "Spotify first, then LRCLIB"),
+}
+
 enum class OverlayState(val label: String, val chip: Boolean, val lyrics: Boolean) {
     ALL("Everything", true, true),
     LYRICS("Lyrics only", false, true),
@@ -49,6 +55,8 @@ class LvConfig {
     var closeSide = Side.RIGHT
     var offsetMs = 0
     var showUnsynced = true
+    var spotifyLyrics = SpotifyMode.FALLBACK
+    var spotifyPort = 9271
 
     var chipEnabled = true
     var waveform = true
@@ -90,6 +98,7 @@ class LvConfig {
         if (mode == null) mode = WorldMode.CLOSE
         if (closeSide == null) closeSide = Side.RIGHT
         if (overlayState == null) overlayState = OverlayState.ALL
+        if (spotifyLyrics == null) spotifyLyrics = SpotifyMode.FALLBACK
         val fixed = defaultBinds()
         binds?.forEach { (k, v) -> if (k != null && v != null) fixed[k] = v }
         binds = fixed
@@ -98,6 +107,7 @@ class LvConfig {
         distance = distance.coerceIn(0.5f, 2f)
         chipScale = chipScale.coerceIn(0.75f, 1.5f)
         offsetMs = offsetMs.coerceIn(-3000, 3000)
+        spotifyPort = spotifyPort.coerceIn(1024, 65535)
     }
 
     fun save() {

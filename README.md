@@ -14,6 +14,7 @@ LyricVibes watches what Windows is playing (Spotify, any browser tab, local play
   - **Close**: a small line floating beside you that lazily follows with spring physics.
   - **Trail**: lines painted on the ground ahead of your path that you walk past.
   - **Orbit**: words slowly circle around you.
+- **Spotify lyrics (optional)**: when LRCLIB has nothing for a song (lesser-known artists, new releases), LyricVibes can read the lyrics your Spotify desktop app loads. See [Spotify lyrics](#spotify-lyrics).
 - **Word-by-word animation**: every word pops in on its own, glows in your accent color, then the line dissolves upward.
 - **Now playing chip**: album art, title and artist, and a waveform driven by your real system audio. It grows when a song changes.
 - **Media keys**: play/pause, next, previous, cycle overlay and open the menu. All customizable, with modifier combos.
@@ -30,6 +31,26 @@ LyricVibes watches what Windows is playing (Spotify, any browser tab, local play
 | Previous track | `Alt + ,` |
 | Cycle overlay | `Alt + L` |
 | Open menu | `Right Shift` |
+
+## Spotify lyrics
+
+LRCLIB is community-made, so smaller artists are often missing. The Spotify desktop app has its own lyrics for many of those songs, and LyricVibes can pick them up.
+
+1. Open the menu, **Lyrics** tab, and set **Spotify lyrics**:
+   - **Off**: LRCLIB only.
+   - **Fallback** (default): Spotify's lyrics are used when LRCLIB has no synced lyrics.
+   - **Prefer**: Spotify's lyrics win when both have them.
+2. Click **Link Spotify** in the row below. Spotify restarts once with a local debug port (`--remote-debugging-port=9271`) and resumes playback. The row says **Linked** when it worked.
+3. Keep Spotify's **Now Playing** side panel open (its lyrics card loads the lyrics) or open Spotify's lyrics view. LyricVibes grabs the lyrics the moment Spotify loads them, and they appear in your world.
+
+Grabbed lyrics are cached in `config/lyricvibes/cache/lyrics`, so a song only needs this once. If a song still shows "No lyrics found", the Now Playing tab tells you what to do next.
+
+Good to know:
+
+- LyricVibes never logs in to Spotify and never touches your Spotify credentials or tokens. It only reads lyric responses the app itself already received.
+- To stay linked without the restart, add `--remote-debugging-port=9271` to the end of your Spotify shortcut's target. The port is `spotifyPort` in `config/lyricvibes.json`.
+- The debug port only listens on `127.0.0.1`, but while it is open, any program on your PC can control Spotify. It closes when Spotify restarts normally. Set **Spotify lyrics** to **Off** and restart Spotify if you don't want that.
+- Works with the regular installer and the Microsoft Store version of Spotify.
 
 ## Install
 
@@ -55,6 +76,7 @@ The Gradle build also compiles the native bridge (`native/bridge`, Rust) and pac
 
 - `native/bridge` is a tiny Rust sidecar. It reads Windows' Global System Media Transport Controls (title, artist, art, timeline, controls) and captures system audio through WASAPI loopback to compute 16 FFT bands. It streams JSON lines over stdio.
 - The mod launches the bridge, extrapolates playback position smoothly and fetches synced lyrics from [LRCLIB](https://lrclib.net). Results are cached in `config/lyricvibes/cache`.
+- With Spotify linked, the mod talks to the app over the Chrome DevTools Protocol, watches for the `color-lyrics` responses Spotify loads for itself, matches them to the playing song and turns them into LRC.
 - World text is drawn in `WorldRenderEvents.END_MAIN` with a bundled Poppins TTF font. The HUD and menu are PolyUI drawn through NanoVG right before the buffer swap.
 
 ## Credits and licenses
@@ -63,4 +85,4 @@ The Gradle build also compiles the native bridge (`native/bridge`, Rust) and pac
 - [PolyUI](https://github.com/Polyfrost/polyui-jvm) by Polyfrost: LGPL-3.0. Bundled unmodified, plus a vendored copy of its NanoVG renderer (`src/main/kotlin/org/polyfrost/...`, LGPL-3.0, visibility tweaks only).
 - [LWJGL](https://www.lwjgl.org/) NanoVG bindings: BSD-3.
 - Poppins font: SIL Open Font License 1.1.
-- Lyrics: [LRCLIB](https://lrclib.net) community database.
+- Lyrics: [LRCLIB](https://lrclib.net) community database, and optionally your own Spotify app.

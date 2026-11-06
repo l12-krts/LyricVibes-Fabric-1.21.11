@@ -3,8 +3,12 @@ package dev.krts.lyricvibes.lyrics
 import com.google.gson.Gson
 import dev.krts.lyricvibes.LyricVibes
 import dev.krts.lyricvibes.config.LvConfig
+import dev.krts.lyricvibes.config.SpotifyMode
 import dev.krts.lyricvibes.media.MediaBridge
 import dev.krts.lyricvibes.media.NowPlaying
+import dev.krts.lyricvibes.spotify.SpotifyLink
+import dev.krts.lyricvibes.spotify.SpotifyLyrics
+import java.nio.file.Path
 import java.nio.file.Files
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -26,6 +30,7 @@ object LyricsService {
         private set
     @Volatile var trackKey: String? = null
         private set
+    @Volatile private var current: RawLyrics? = null
 
     private val providers: List<LyricsProvider> = listOf(LrcLibProvider)
     private val pool = Executors.newSingleThreadExecutor { Thread(it, "LyricVibes-Lyrics").apply { isDaemon = true } }
@@ -33,13 +38,17 @@ object LyricsService {
     private val cacheDir = LvConfig.dir.resolve("cache").resolve("lyrics")
     private const val NEGATIVE_TTL = 24L * 3600_000L
 
-    private class Cached(val synced: String?, val plain: String?, val source: String?, val instrumental: Boolean, val at: Long)
+    private class Cached(val synced: String?, val plain: String?, val source: String?, val instrumental: Boolean, val at: Long) {
+        val found get() = synced != null || plain != null || instrumental
+        fun raw() = RawLyrics(synced, plain, source ?: "cache", instrumental)
+    }
 
     fun onTrack(np: NowPlaying?) {
         val key = np?.key
         if (key == trackKey) return
         trackKey = key
         lyrics = null
+        current = null
         if (np == null) {
             status = LyricsStatus.IDLE
             return
@@ -51,22 +60,70 @@ object LyricsService {
     fun retry() {
         val np = MediaBridge.nowPlaying ?: return
         trackKey = null
-        runCatching { Files.deleteIfExists(cacheFile(np.key)) }
+        runCatching {
+            Files.deleteIfExists(cacheFile(np.key))
+            Files.deleteIfExists(spotifyFile(np.key))
+        }
+        SpotifyLink.forget(np.key)
         onTrack(np)
     }
 
+    fun reload() {
+        val np = MediaBridge.nowPlaying ?: return
+        trackKey = null
+        SpotifyLink.forget(np.key)
+        onTrack(np)
+    }
+
+    fun onSpotify(np: NowPlaying, raw: RawLyrics) {
+        writeCache(spotifyFile(np.key), raw)
+        pool.execute {
+            if (trackKey != np.key || current?.source == SpotifyLyrics.SOURCE) return@execute
+            if (pick(current, raw) === raw) apply(raw, np)
+        }
+    }
+
+    // nothing Spotify could improve
+    fun settled(key: String) = trackKey == key && status == LyricsStatus.SYNCED &&
+        (lyrics?.source == SpotifyLyrics.SOURCE || LyricVibes.config.spotifyLyrics != SpotifyMode.PREFER)
+
     private fun cacheFile(key: String) = cacheDir.resolve(MediaBridge.sha1(key) + ".json")
 
+    private fun spotifyFile(key: String) = cacheDir.resolve(MediaBridge.sha1(key) + ".spotify.json")
+
     private fun resolve(np: NowPlaying, key: String) {
-        val cached = readCache(key)
-        val raw = when {
-            cached != null && (cached.synced != null || cached.plain != null || cached.instrumental) ->
-                RawLyrics(cached.synced, cached.plain, cached.source ?: "cache", cached.instrumental)
+        val early = spotifyCached(key)
+        val lrc = if (LyricVibes.config.spotifyLyrics == SpotifyMode.PREFER && early?.synced != null) null else lrclib(np, key)
+        if (trackKey != key) return
+        apply(pick(lrc, early ?: spotifyCached(key)), np)
+    }
+
+    private fun lrclib(np: NowPlaying, key: String): RawLyrics? {
+        val cached = readCache(cacheFile(key))
+        return when {
+            cached != null && cached.found -> cached.raw()
             cached != null && System.currentTimeMillis() - cached.at < NEGATIVE_TTL -> null
             else -> fetch(np, key)
         }
-        if (trackKey != key) return
-        apply(raw, np)
+    }
+
+    private fun spotifyCached(key: String) =
+        if (LyricVibes.config.spotifyLyrics == SpotifyMode.OFF) null else readCache(spotifyFile(key))?.takeIf { it.found }?.raw()
+
+    private fun rank(r: RawLyrics?) = when {
+        r == null -> 0
+        r.synced != null -> 3
+        r.instrumental -> 2
+        r.plain != null -> 1
+        else -> 0
+    }
+
+    private fun pick(base: RawLyrics?, spotify: RawLyrics?): RawLyrics? {
+        val mode = LyricVibes.config.spotifyLyrics
+        if (spotify == null || mode == SpotifyMode.OFF) return base
+        val a = rank(base)
+        val b = rank(spotify)
+        return if (b > a || (b == a && mode == SpotifyMode.PREFER)) spotify else base
     }
 
     private fun fetch(np: NowPlaying, key: String): RawLyrics? {
@@ -80,11 +137,12 @@ object LyricsService {
             }
             if (result == null) result = r
         }
-        writeCache(key, result)
+        writeCache(cacheFile(key), result)
         return result
     }
 
     private fun apply(raw: RawLyrics?, np: NowPlaying) {
+        current = raw
         val parsed = raw?.synced?.let { LrcParser.parse(it, raw.source) }
         when {
             parsed != null -> {
@@ -98,7 +156,7 @@ object LyricsService {
             }
             else -> status = LyricsStatus.NONE
         }
-        LyricVibes.LOGGER.info("Lyrics for '{}': {} ({} lines)", np.title, status, lyrics?.lines?.size ?: 0)
+        LyricVibes.LOGGER.info("Lyrics for '{}': {} via {} ({} lines)", np.title, status, raw?.source ?: "none", lyrics?.lines?.size ?: 0)
     }
 
     private fun waitForDuration(np: NowPlaying): Long {
@@ -110,16 +168,15 @@ object LyricsService {
         return 0
     }
 
-    private fun readCache(key: String): Cached? = runCatching {
-        val f = cacheFile(key)
+    private fun readCache(f: Path): Cached? = runCatching {
         if (!Files.exists(f)) null else Files.newBufferedReader(f).use { gson.fromJson(it, Cached::class.java) }
     }.getOrNull()
 
-    private fun writeCache(key: String, raw: RawLyrics?) {
+    private fun writeCache(f: Path, raw: RawLyrics?) {
         runCatching {
             Files.createDirectories(cacheDir)
             val c = Cached(raw?.synced, raw?.plain, raw?.source, raw?.instrumental == true, System.currentTimeMillis())
-            Files.newBufferedWriter(cacheFile(key)).use { gson.toJson(c, it) }
+            Files.newBufferedWriter(f).use { gson.toJson(c, it) }
         }
     }
 }

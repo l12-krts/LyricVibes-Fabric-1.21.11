@@ -7,12 +7,14 @@ import dev.krts.lyricvibes.config.Bind
 import dev.krts.lyricvibes.config.LvConfig
 import dev.krts.lyricvibes.config.OverlayState
 import dev.krts.lyricvibes.config.Side
+import dev.krts.lyricvibes.config.SpotifyMode
 import dev.krts.lyricvibes.config.WorldMode
 import dev.krts.lyricvibes.input.Keybinds
 import dev.krts.lyricvibes.lyrics.LyricsService
 import dev.krts.lyricvibes.lyrics.LyricsStatus
 import dev.krts.lyricvibes.lyrics.PlaybackClock
 import dev.krts.lyricvibes.media.MediaBridge
+import dev.krts.lyricvibes.spotify.SpotifyLink
 import net.minecraft.util.Util
 import org.lwjgl.glfw.GLFW
 import org.polyfrost.polyui.component.Drawable
@@ -23,7 +25,13 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-private class Row(val label: String, val sub: String?, val widget: Widget?, val visible: () -> Boolean = { true })
+private class Row(
+    val label: String,
+    val sub: String?,
+    val widget: Widget?,
+    val live: (() -> String)? = null,
+    val visible: () -> Boolean = { true },
+)
 
 private object MenuParts {
     private val cfg get() = LyricVibes.config
@@ -36,6 +44,7 @@ private object MenuParts {
     val play = IconButton({ if (MediaBridge.nowPlaying?.playing == true) Paint.PAUSE else Paint.PLAY }, 46f, true) { MediaBridge.togglePlay() }
     val next = IconButton({ Paint.NEXT }, 36f, false) { MediaBridge.send("next") }
     val retry = TextButton("Search again") { LyricsService.retry() }
+    val spotifyLink = TextButton({ SpotifyLink.button }) { SpotifyLink.relaunch() }
     val folder = TextButton("Open config folder") { Util.getOperatingSystem().open(LvConfig.dir.toFile()) }
     val resetBinds = TextButton("Reset to defaults") {
         cfg.binds = LvConfig.defaultBinds()
@@ -55,6 +64,11 @@ private object MenuParts {
             if (v > 0) "+$v ms" else "$v ms"
         }),
         Row("Unsynced lyrics", "Drift plain lyrics when timing is missing", Toggle({ cfg.showUnsynced }) { cfg.showUnsynced = it }),
+        Row("Spotify lyrics", null, Segmented(SpotifyMode.entries.map { it.label }, 200f, { cfg.spotifyLyrics.ordinal }) {
+            cfg.spotifyLyrics = SpotifyMode.entries[it]
+            LyricsService.reload()
+        }, live = { cfg.spotifyLyrics.hint }),
+        Row("Spotify link", null, spotifyLink, live = { SpotifyLink.state.label }) { cfg.spotifyLyrics != SpotifyMode.OFF },
     )
 
     val overlayRows = listOf(
@@ -254,7 +268,8 @@ class MenuRoot : Drawable(*MenuParts.all.toTypedArray(), at = Vec2(1f, 1f), size
                 var ry = top - scrollSpring.value
                 for (row in rows) {
                     val wdg = row.widget ?: continue
-                    placeIn(wdg, cx + cw - wdg.preferredWidth, ry + (44f - wdg.preferredHeight) / 2f, fadeAll * cf, clip)
+                    val ww = (wdg as? TextButton)?.measure() ?: wdg.preferredWidth
+                    placeIn(wdg, cx + cw - ww, ry + (44f - wdg.preferredHeight) / 2f, fadeAll * cf, clip, ww)
                     ry += 44f
                 }
                 contentHeight = rows.size * 44f + if (tab == 3) 60f else 0f
@@ -321,9 +336,10 @@ class MenuRoot : Drawable(*MenuParts.all.toTypedArray(), at = Vec2(1f, 1f), size
         var ry = top - scrollSpring.value
         for ((i, row) in rows.withIndex()) {
             val mid = ry + 22f
-            if (row.sub != null) {
+            val sub = row.live?.invoke() ?: row.sub
+            if (sub != null) {
                 Paint.text(r, Paint.medium, cx, mid - 7f, row.label, Paint.fade(Paint.TEXT, alpha), 13f)
-                Paint.text(r, Paint.regular, cx, mid + 9f, row.sub, Paint.fade(Paint.FAINT, alpha), 11f)
+                Paint.text(r, Paint.regular, cx, mid + 9f, sub, Paint.fade(Paint.FAINT, alpha), 11f)
             } else {
                 Paint.text(r, Paint.medium, cx, mid, row.label, Paint.fade(Paint.TEXT, alpha), 13f)
             }
@@ -395,7 +411,7 @@ class MenuRoot : Drawable(*MenuParts.all.toTypedArray(), at = Vec2(1f, 1f), size
         }
         val ly = top + 150f + 14f
         NVGExtras.circle(cx + 5f, ly, 4f, Paint.fade(dot, alpha))
-        val label = if (source != null) "${status.label}  ·  $source" else status.label
+        val label = listOfNotNull(status.label, source, SpotifyLink.hint(np)).joinToString("  ·  ")
         Paint.text(r, Paint.medium, cx + 16f, ly, label, Paint.fade(Paint.MUTED, alpha), 12f)
         Paint.text(r, Paint.regular, cx, ly + 30f, "Shortcuts: ${Keybinds.describe(LyricVibes.config.bind(Action.PLAY_PAUSE))} play/pause, " +
             "${Keybinds.describe(LyricVibes.config.bind(Action.CYCLE_OVERLAY))} overlay", Paint.fade(Paint.FAINT, alpha), 11f)
@@ -409,10 +425,11 @@ class MenuRoot : Drawable(*MenuParts.all.toTypedArray(), at = Vec2(1f, 1f), size
             Triple(Paint.regular, 12f, "finds synced lyrics and lets them drift through Minecraft beside you."),
             null,
             Triple(Paint.medium, 12f, "Lyrics  >  LRCLIB (lrclib.net), community synced lyrics"),
+            Triple(Paint.medium, 12f, "Spotify  >  lyrics your Spotify app loads, once linked"),
             Triple(Paint.medium, 12f, "Interface  >  PolyUI by Polyfrost (LGPL-3.0)"),
             Triple(Paint.medium, 12f, "Font  >  Poppins (SIL Open Font License)"),
             null,
-            Triple(Paint.regular, 11f, "Bridge: ${MediaBridge.status}   ·   Player: ${MediaBridge.nowPlaying?.app?.substringAfterLast('!')?.ifBlank { null } ?: "none"}"),
+            Triple(Paint.regular, 11f, "Bridge: ${MediaBridge.status}   ·   Player: ${MediaBridge.nowPlaying?.app?.substringAfterLast('!')?.ifBlank { null } ?: "none"}   ·   Spotify: ${SpotifyLink.state.label}"),
             Triple(Paint.regular, 11f, "Config and cache in config/lyricvibes."),
         )
         var y = top + 8f

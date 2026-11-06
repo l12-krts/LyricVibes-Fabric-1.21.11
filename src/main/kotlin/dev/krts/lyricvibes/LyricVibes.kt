@@ -3,6 +3,7 @@ package dev.krts.lyricvibes
 import dev.krts.lyricvibes.config.LvConfig
 import dev.krts.lyricvibes.lyrics.LyricsService
 import dev.krts.lyricvibes.media.MediaBridge
+import dev.krts.lyricvibes.spotify.SpotifyLink
 import dev.krts.lyricvibes.ui.MenuScreen
 import dev.krts.lyricvibes.world.WorldLyricsRenderer
 import net.fabricmc.api.ClientModInitializer
@@ -31,10 +32,14 @@ object LyricVibes : ClientModInitializer {
     override fun onInitializeClient() {
         config = LvConfig.load()
         MediaBridge.start()
+        SpotifyLink.start()
 
         ClientTickEvents.END_CLIENT_TICK.register { LyricsService.onTrack(MediaBridge.nowPlaying) }
         WorldRenderEvents.END_MAIN.register(WorldLyricsRenderer::render)
-        ClientLifecycleEvents.CLIENT_STOPPING.register { MediaBridge.stop() }
+        ClientLifecycleEvents.CLIENT_STOPPING.register {
+            SpotifyLink.stop()
+            MediaBridge.stop()
+        }
 
         ScreenEvents.AFTER_INIT.register { client, screen, _, _ ->
             if (screen !is GameMenuScreen) return@register
